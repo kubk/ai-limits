@@ -11,6 +11,7 @@ import (
 	"image/draw"
 	"image/png"
 	"log"
+	"maps"
 	"sync"
 	"time"
 
@@ -30,18 +31,32 @@ type app struct {
 	panel *mygo.Window // the open popover, or nil
 
 	// Read and written on the main thread only.
-	results  map[string]limits.Result
+	windows  map[string][]limits.Window // the last numbers read, by provider
+	errs     map[string]error           // the last read's failure, by provider
 	loading  bool
 	lastLoad time.Time // when the last read started, for minRefreshGap
-	updated  time.Time // when the numbers shown were read
 }
 
-var providers = []struct {
-	id, name string
-	read     func(context.Context) limits.Result
-}{
-	{"codex", "Codex", limits.Codex},
-	{"claude", "Claude", limits.Claude},
+// provider is one service the popover shows, with its look in T3 Code
+// (usageProviders.ts, Icons.tsx).
+type provider struct {
+	id, name    string
+	read        func(context.Context) ([]limits.Window, error)
+	light, dark ui.Color // bars fill with it at 35%, as T3's
+	icon        *ui.SVG
+}
+
+var providers = []provider{
+	// Codex draws in the contrast foreground.
+	{"codex", "Codex", limits.Codex, ui.Hex("#18181B"), ui.RGB(255, 255, 255), openaiIcon},
+	{"claude", "Claude", limits.Claude, ui.Hex("#D97757"), ui.Hex("#D97757"), claudeIcon},
+}
+
+func (p provider) color(dark bool) ui.Color {
+	if dark {
+		return p.dark
+	}
+	return p.light
 }
 
 // refresh reads both providers in parallel, off the main thread.
@@ -56,27 +71,39 @@ func (a *app) refresh() {
 	a.lastLoad = time.Now()
 	a.redraw()
 	go func() {
+		type read struct {
+			windows []limits.Window
+			err     error
+		}
+		out := make([]read, len(providers))
 		var wg sync.WaitGroup
-		out := make([]limits.Result, len(providers))
 		for i, p := range providers {
-			wg.Go(func() { out[i] = p.read(context.Background()) })
+			wg.Go(func() {
+				w, err := p.read(context.Background())
+				out[i] = read{w, err}
+			})
 		}
 		wg.Wait()
+		var snapshot map[string][]limits.Window
 		mygo.RunOnMain(func() {
-			for _, r := range out {
-				prev := a.results[r.Provider]
-				// Keep the last good numbers through a transient failure.
-				if r.Err != nil && len(prev.Windows) > 0 && !errors.Is(r.Err, limits.ErrNotInstalled) {
-					prev.Err = r.Err
-					r = prev
+			for i, p := range providers {
+				if r := out[i]; r.err != nil {
+					// Earlier numbers stay through a failure, unless the
+					// CLI is gone.
+					a.errs[p.id] = r.err
+					if errors.Is(r.err, limits.ErrNotInstalled) {
+						delete(a.windows, p.id)
+					}
+				} else {
+					a.windows[p.id] = r.windows
+					delete(a.errs, p.id)
 				}
-				a.results[r.Provider] = r
 			}
 			a.loading = false
-			a.updated = time.Now()
-			saveCache(a.results, a.updated)
 			a.redraw()
+			snapshot = maps.Clone(a.windows)
 		})
+		saveCache(snapshot) // off the main thread
 	}()
 }
 
@@ -135,6 +162,8 @@ func (a *app) ready() {
 		a.tray.PopUpMenu()
 	})
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) { a.tray.Destroy() })
+	// The login shell's PATH, ready before the first click needs it.
+	go limits.Prepare()
 }
 
 // trayIcon draws three bars of different lengths, black on transparent
@@ -153,11 +182,8 @@ func trayIcon() []byte {
 }
 
 func main() {
-	a := &app{results: map[string]limits.Result{}}
-	if c, ok := loadCache(); ok {
-		a.results, a.updated = c.Results, c.SavedAt
-	}
-	mygo.App.SetName("AI Limits")
+	mygo.App.SetName("AI Limits") // before loadCache, which is under the app's name
+	a := &app{windows: loadCache(), errs: map[string]error{}}
 	mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)
 	// The popover is the app's only window: keep running as it closes.
 	mygo.App.OnWindowAllClosed(func() {})

@@ -1,7 +1,6 @@
 package limits
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -32,91 +31,62 @@ type codexRateLimitsResponse struct {
 
 // Codex asks `codex app-server` for the account's rate limits, as T3 Code's
 // CodexProvider does.
-func Codex(ctx context.Context) Result {
-	res := Result{Provider: "codex", CheckedAt: time.Now()}
+func Codex(ctx context.Context) ([]Window, error) {
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
-
 	s, err := start(ctx, "codex", "app-server")
 	if err != nil {
-		res.Err = err
-		return res
+		return nil, err
 	}
 	defer s.close()
 
-	isID := func(id int) func([]byte) bool {
-		want := []byte(fmt.Sprintf(`"id":%d`, id))
-		return func(line []byte) bool { return bytes.Contains(line, want) }
+	reply := func(id int) func(message) bool {
+		return func(m message) bool { return m.ID != nil && *m.ID == id && m.Method == "" }
 	}
-	if err := s.send(map[string]any{
+	var init json.RawMessage
+	if err := s.call(ctx, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "initialize",
 		"params": map[string]any{"clientInfo": map[string]any{
 			"name": "ai_limits", "title": "AI Limits", "version": "0.1.0",
 		}},
-	}); err != nil {
-		res.Err = err
-		return res
+	}, reply(1), &init); err != nil {
+		return nil, err
 	}
-	if _, err := s.next(ctx, isID(1)); err != nil {
-		res.Err = err
-		return res
-	}
-	s.send(map[string]any{"jsonrpc": "2.0", "method": "initialized"})
-	s.send(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": nil})
-	line, err := s.next(ctx, isID(2))
-	if err != nil {
-		res.Err = err
-		return res
+	if err := s.call(ctx, map[string]any{"jsonrpc": "2.0", "method": "initialized"}, nil, nil); err != nil {
+		return nil, err
 	}
 	var msg struct {
 		Result *codexRateLimitsResponse `json:"result"`
 		Error  *struct {
-			Code    int    `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.Unmarshal(line, &msg); err != nil {
-		res.Err = err
-		return res
+	if err := s.call(ctx, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": nil}, reply(2), &msg); err != nil {
+		return nil, err
 	}
 	if msg.Error != nil {
-		res.Err = fmt.Errorf("Codex could not read usage: %s", msg.Error.Message)
-		return res
+		return nil, fmt.Errorf("Codex could not read usage: %s", msg.Error.Message)
 	}
 	if msg.Result == nil {
-		res.Err = fmt.Errorf("Codex returned no usage")
-		return res
+		return nil, fmt.Errorf("Codex returned no usage")
 	}
 	snap := msg.Result.RateLimits
 	if byID, ok := msg.Result.RateLimitsByLimitID["codex"]; ok {
 		snap = byID
 	}
-	if snap.PlanType != nil {
-		res.Plan = *snap.PlanType
-	}
-	res.Windows = codexWindows(snap)
-	return res
+	return codexWindows(snap), nil
 }
 
-func kindForDuration(mins int) string {
+// labelForMins names a window by its length, as T3's kindForDuration and
+// labelForKind.
+func labelForMins(mins int) string {
 	switch {
 	case mins >= monthMins:
-		return "monthly"
+		return "Monthly"
 	case mins >= weekMins:
-		return "weekly"
-	default:
-		return "session"
-	}
-}
-
-func labelForKind(kind string) string {
-	switch kind {
-	case "session":
-		return "Session"
-	case "weekly":
 		return "Weekly"
 	default:
-		return "Monthly"
+		return "Session"
 	}
 }
 
@@ -150,8 +120,7 @@ func codexWindows(s codexSnapshot) []Window {
 		if p.w.WindowDurationMins != nil {
 			mins = *p.w.WindowDurationMins
 		}
-		kind := kindForDuration(mins)
-		w := Window{ID: p.id, Kind: kind, Label: labelForKind(kind), UsedPercent: clampPercent(*p.w.UsedPercent), DurationMins: mins}
+		w := Window{ID: p.id, Label: labelForMins(mins), UsedPercent: clampPercent(*p.w.UsedPercent), DurationMins: mins}
 		if p.w.ResetsAt != nil {
 			w.ResetsAt = fromEpochSeconds(*p.w.ResetsAt)
 		}
@@ -159,7 +128,7 @@ func codexWindows(s codexSnapshot) []Window {
 	}
 	if il := s.IndividualLimit; il != nil {
 		out = append(out, Window{
-			ID: "individual", Kind: "monthly", Label: "Monthly credit limit",
+			ID: "individual", Label: "Monthly credit limit",
 			UsedPercent: clampPercent(100 - il.RemainingPercent),
 			ResetsAt:    fromEpochSeconds(il.ResetsAt),
 		})

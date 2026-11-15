@@ -20,68 +20,71 @@ var ErrNotInstalled = errors.New("CLI not found")
 
 var pathOnce sync.Once
 
-// loginPath gives this process the PATH of the user's login shell. An app
-// opened from Finder or at login gets launchd's bare PATH, which has
-// neither ~/.local/bin (claude) nor Homebrew (codex, node).
-func loginPath() {
+// Prepare gives this process the PATH of the user's login shell, once. An
+// app opened from Finder or at login gets launchd's bare PATH, which has
+// neither ~/.local/bin (claude) nor Homebrew (codex, node). It starts a
+// login shell, so call it early, off the main thread.
+func Prepare() {
 	pathOnce.Do(func() {
-		home, _ := os.UserHomeDir()
-		extra := []string{
-			filepath.Join(home, ".local/bin"),
-			filepath.Join(home, ".claude/local"),
-			"/opt/homebrew/bin",
-			"/usr/local/bin",
-			filepath.Join(home, ".bun/bin"),
-			filepath.Join(home, ".npm-global/bin"),
-			filepath.Join(home, ".volta/bin"),
+		path := loginShellPath()
+		if path == "" {
+			// No usable shell: the usual install locations.
+			home, _ := os.UserHomeDir()
+			path = strings.Join([]string{
+				os.Getenv("PATH"),
+				filepath.Join(home, ".local/bin"),
+				"/opt/homebrew/bin",
+				"/usr/local/bin",
+			}, ":")
 		}
-		shell := os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/zsh"
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		out, err := exec.CommandContext(ctx, shell, "-ilc", `printf '\n__PATH__%s\n' "$PATH"`).Output()
-		if err == nil {
-			for _, line := range strings.Split(string(out), "\n") {
-				if p, ok := strings.CutPrefix(line, "__PATH__"); ok {
-					extra = append(strings.Split(p, ":"), extra...)
-				}
-			}
-		}
-		seen := map[string]bool{}
-		var merged []string
-		for _, p := range append(strings.Split(os.Getenv("PATH"), ":"), extra...) {
-			if p != "" && !seen[p] {
-				seen[p] = true
-				merged = append(merged, p)
-			}
-		}
-		os.Setenv("PATH", strings.Join(merged, ":"))
+		os.Setenv("PATH", path)
 	})
 }
 
-func lookPath(name string) (string, error) {
-	loginPath()
-	p, err := exec.LookPath(name)
-	if err != nil {
-		return "", fmt.Errorf("%s %w", name, ErrNotInstalled)
+func loginShellPath() string {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/zsh"
 	}
-	return p, nil
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// Interactive too, for version managers that set PATH in .zshrc.
+	out, err := exec.CommandContext(ctx, shell, "-ilc", `printf '\n__PATH__%s\n' "$PATH"`).Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if p, ok := strings.CutPrefix(line, "__PATH__"); ok {
+			return p
+		}
+	}
+	return ""
+}
+
+// message is one JSON line of a CLI, decoded as far as replies are matched.
+type message struct {
+	raw      []byte
+	ID       *int   `json:"id"`     // JSON-RPC (codex)
+	Method   string `json:"method"` // set on the server's own requests
+	Type     string `json:"type"`   // stream-json (claude)
+	Response struct {
+		RequestID string `json:"request_id"`
+	} `json:"response"`
 }
 
 // session is a CLI talking newline-delimited JSON over stdio.
 type session struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
-	lines  chan []byte
-	stderr *strings.Builder
+	msgs   chan message
+	stderr *limitedWriter
 }
 
 func start(ctx context.Context, name string, args ...string) (*session, error) {
-	bin, err := lookPath(name)
+	Prepare()
+	bin, err := exec.LookPath(name)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s %w", name, ErrNotInstalled)
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	// A neutral directory: no project instructions, settings or MCP servers.
@@ -95,20 +98,21 @@ func start(ctx context.Context, name string, args ...string) (*session, error) {
 	if err != nil {
 		return nil, err
 	}
-	stderr := &strings.Builder{}
-	cmd.Stderr = &limitedWriter{w: stderr, n: 4096}
+	s := &session{cmd: cmd, stdin: stdin, msgs: make(chan message, 16), stderr: &limitedWriter{n: 4096}}
+	cmd.Stderr = s.stderr
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	s := &session{cmd: cmd, stdin: stdin, lines: make(chan []byte, 16), stderr: stderr}
 	go func() {
-		defer close(s.lines)
-		r := bufio.NewReaderSize(stdout, 1<<20)
+		defer close(s.msgs)
+		r := bufio.NewReader(stdout)
 		for {
 			line, err := r.ReadBytes('\n')
-			if len(line) > 0 {
+			var m message
+			if json.Unmarshal(line, &m) == nil {
+				m.raw = line
 				select {
-				case s.lines <- line:
+				case s.msgs <- m:
 				case <-ctx.Done():
 					return
 				}
@@ -121,31 +125,29 @@ func start(ctx context.Context, name string, args ...string) (*session, error) {
 	return s, nil
 }
 
-func (s *session) send(v any) error {
-	b, err := json.Marshal(v)
+// call sends req and waits for the reply match accepts, which it decodes
+// into out.
+func (s *session) call(ctx context.Context, req any, match func(message) bool, out any) error {
+	b, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
-	_, err = s.stdin.Write(append(b, '\n'))
-	return err
-}
-
-// next waits for the first line match accepts.
-func (s *session) next(ctx context.Context, match func([]byte) bool) ([]byte, error) {
+	if _, err := s.stdin.Write(append(b, '\n')); err != nil {
+		return err
+	}
+	if match == nil {
+		return nil
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("timed out waiting for the CLI")
-		case line, ok := <-s.lines:
+			return fmt.Errorf("timed out waiting for the CLI")
+		case m, ok := <-s.msgs:
 			if !ok {
-				msg := strings.TrimSpace(s.stderr.String())
-				if msg == "" {
-					msg = "the CLI exited"
-				}
-				return nil, errors.New(lastLine(msg))
+				return errors.New(s.stderr.lastLine())
 			}
-			if match(line) {
-				return line, nil
+			if match(m) {
+				return json.Unmarshal(m.raw, out)
 			}
 		}
 	}
@@ -159,26 +161,28 @@ func (s *session) close() {
 	s.cmd.Wait()
 }
 
-func lastLine(s string) string {
-	lines := strings.Split(strings.TrimSpace(s), "\n")
-	return strings.TrimSpace(lines[len(lines)-1])
-}
-
+// limitedWriter keeps the first n bytes of what a CLI writes to stderr.
 type limitedWriter struct {
 	mu sync.Mutex
-	w  *strings.Builder
+	b  strings.Builder
 	n  int
 }
 
 func (l *limitedWriter) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if room := l.n - l.w.Len(); room > 0 {
-		if len(p) > room {
-			l.w.Write(p[:room])
-		} else {
-			l.w.Write(p)
-		}
+	if room := l.n - l.b.Len(); room > 0 {
+		l.b.Write(p[:min(len(p), room)])
 	}
 	return len(p), nil
+}
+
+func (l *limitedWriter) lastLine() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	s := strings.TrimSpace(l.b.String())
+	if s == "" {
+		return "the CLI exited"
+	}
+	return strings.TrimSpace(s[strings.LastIndex(s, "\n")+1:])
 }

@@ -11,9 +11,13 @@ import (
 
 func main() {
 	now := time.Now()
-	for _, r := range []limits.Result{limits.Codex(context.Background()), limits.Claude(context.Background())} {
-		fmt.Printf("%s (plan %q) err=%v\n", r.Provider, r.Plan, r.Err)
-		for _, w := range r.Windows {
+	for _, p := range []struct {
+		name string
+		read func(context.Context) ([]limits.Window, error)
+	}{{"codex", limits.Codex}, {"claude", limits.Claude}} {
+		windows, err := p.read(context.Background())
+		fmt.Printf("%s err=%v\n", p.name, err)
+		for _, w := range windows {
 			pace, _ := w.PaceRemaining(now)
 			fmt.Printf("  %-18s %3d%% left  pace-mark %.0f%%  pace %d  resets in %s\n", w.Label, w.Remaining(), pace, w.Pace(now), limits.FormatDuration(w.ResetsAt.Sub(now)))
 		}

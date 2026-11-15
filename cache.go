@@ -4,53 +4,39 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"time"
 
 	"ai-limits/limits"
+
+	"github.com/egoist/mygo"
 )
 
-// The last good numbers, kept on disk so that a fresh launch shows them at
+// The last numbers read, kept on disk so that a fresh launch shows them at
 // once while the first read runs.
-type cached struct {
-	SavedAt time.Time                `json:"savedAt"`
-	Results map[string]limits.Result `json:"results"`
-}
 
+// cachePath is in the app's cache directory, which MyGo creates.
 func cachePath() string {
-	dir, err := os.UserConfigDir() // ~/Library/Application Support
+	dir, err := mygo.App.Path(mygo.PathCache)
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(dir, "AI Limits", "last.json")
+	return filepath.Join(dir, "last.json")
 }
 
-func loadCache() (cached, bool) {
-	var c cached
-	b, err := os.ReadFile(cachePath())
-	if err != nil || json.Unmarshal(b, &c) != nil || len(c.Results) == 0 {
-		return c, false
+func loadCache() map[string][]limits.Window {
+	windows := map[string][]limits.Window{}
+	if b, err := os.ReadFile(cachePath()); err == nil {
+		json.Unmarshal(b, &windows)
 	}
-	return c, true
+	return windows
 }
 
-// saveCache writes only results that have numbers, errors left out.
-func saveCache(results map[string]limits.Result, at time.Time) {
-	good := map[string]limits.Result{}
-	for id, r := range results {
-		if len(r.Windows) > 0 {
-			r.Err = nil
-			good[id] = r
-		}
-	}
-	if len(good) == 0 {
-		return
-	}
-	b, err := json.Marshal(cached{SavedAt: at, Results: good})
+func saveCache(windows map[string][]limits.Window) {
+	b, err := json.Marshal(windows)
 	if err != nil {
 		return
 	}
 	p := cachePath()
-	if os.MkdirAll(filepath.Dir(p), 0o700) != nil {
+	if p == "" {
 		return
 	}
 	tmp := p + ".tmp"

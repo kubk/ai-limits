@@ -1,7 +1,6 @@
 package limits
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -43,7 +42,6 @@ type claudeRateLimits struct {
 }
 
 type claudeUsage struct {
-	SubscriptionType    string            `json:"subscription_type"`
 	RateLimitsAvailable bool              `json:"rate_limits_available"`
 	RateLimits          *claudeRateLimits `json:"rate_limits"`
 }
@@ -51,11 +49,9 @@ type claudeUsage struct {
 // Claude asks the `claude` CLI for usage with the Agent SDK's control
 // protocol, as T3 Code's ClaudeProvider does: initialize, then get_usage.
 // No user message is sent, so nothing reaches the model.
-func Claude(ctx context.Context) Result {
-	res := Result{Provider: "claude", CheckedAt: time.Now()}
+func Claude(ctx context.Context) ([]Window, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-
 	s, err := start(ctx, "claude",
 		"-p",
 		"--input-format", "stream-json",
@@ -69,27 +65,17 @@ func Claude(ctx context.Context) Result {
 		"--no-session-persistence",
 	)
 	if err != nil {
-		res.Err = err
-		return res
+		return nil, err
 	}
 	defer s.close()
 
-	isResponse := func(id string) func([]byte) bool {
-		want := []byte(`"request_id":"` + id + `"`)
-		return func(line []byte) bool {
-			return bytes.Contains(line, []byte(`"control_response"`)) && bytes.Contains(line, want)
-		}
+	control := func(id string, request map[string]any, out any) error {
+		reply := func(m message) bool { return m.Type == "control_response" && m.Response.RequestID == id }
+		return s.call(ctx, map[string]any{"type": "control_request", "request_id": id, "request": request}, reply, out)
 	}
-	s.send(map[string]any{"type": "control_request", "request_id": "init", "request": map[string]any{"subtype": "initialize"}})
-	if _, err := s.next(ctx, isResponse("init")); err != nil {
-		res.Err = err
-		return res
-	}
-	s.send(map[string]any{"type": "control_request", "request_id": "usage", "request": map[string]any{"subtype": "get_usage", "skip_behaviors": true}})
-	line, err := s.next(ctx, isResponse("usage"))
-	if err != nil {
-		res.Err = err
-		return res
+	var init json.RawMessage
+	if err := control("init", map[string]any{"subtype": "initialize"}, &init); err != nil {
+		return nil, err
 	}
 	var msg struct {
 		Response struct {
@@ -98,22 +84,17 @@ func Claude(ctx context.Context) Result {
 			Response claudeUsage `json:"response"`
 		} `json:"response"`
 	}
-	if err := json.Unmarshal(line, &msg); err != nil {
-		res.Err = err
-		return res
+	if err := control("usage", map[string]any{"subtype": "get_usage", "skip_behaviors": true}, &msg); err != nil {
+		return nil, err
 	}
 	if msg.Response.Subtype != "success" {
-		res.Err = fmt.Errorf("Claude could not read usage: %s", msg.Response.Error)
-		return res
+		return nil, fmt.Errorf("Claude could not read usage: %s", msg.Response.Error)
 	}
 	u := msg.Response.Response
-	res.Plan = u.SubscriptionType
 	if !u.RateLimitsAvailable || u.RateLimits == nil {
-		res.Err = fmt.Errorf("this Claude login has no subscription limits")
-		return res
+		return nil, fmt.Errorf("this Claude login has no subscription limits")
 	}
-	res.Windows = claudeWindows(u.RateLimits)
-	return res
+	return claudeWindows(u.RateLimits), nil
 }
 
 var nonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
@@ -123,11 +104,11 @@ var nonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
 func claudeWindows(rl *claudeRateLimits) []Window {
 	var out []Window
 	if b := rl.FiveHour; b != nil && b.Utilization != nil {
-		out = append(out, Window{ID: "five_hour", Kind: "session", Label: "Session",
+		out = append(out, Window{ID: "five_hour", Label: "Session",
 			DurationMins: sessionMins, UsedPercent: clampPercent(*b.Utilization), ResetsAt: fromISO(b.ResetsAt)})
 	}
 	if b := rl.SevenDay; b != nil && b.Utilization != nil {
-		out = append(out, Window{ID: "seven_day", Kind: "weekly", Label: "Weekly",
+		out = append(out, Window{ID: "seven_day", Label: "Weekly",
 			DurationMins: weekMins, UsedPercent: clampPercent(*b.Utilization), ResetsAt: fromISO(b.ResetsAt)})
 	}
 	for _, m := range rl.ModelScoped {
@@ -135,13 +116,13 @@ func claudeWindows(rl *claudeRateLimits) []Window {
 			continue
 		}
 		out = append(out, Window{
-			ID:   "seven_day_" + nonAlnum.ReplaceAllString(strings.ToLower(*m.DisplayName), "_"),
-			Kind: "weekly", Label: "Weekly · " + *m.DisplayName,
+			ID:           "seven_day_" + nonAlnum.ReplaceAllString(strings.ToLower(*m.DisplayName), "_"),
+			Label:        "Weekly · " + *m.DisplayName,
 			DurationMins: weekMins, UsedPercent: clampPercent(*m.Utilization), ResetsAt: fromISO(m.ResetsAt),
 		})
 	}
 	if p, ok := claudeSpendPercent(rl); ok {
-		out = append(out, Window{ID: "monthly_spend", Kind: "monthly", Label: "Monthly spend", UsedPercent: p})
+		out = append(out, Window{ID: "monthly_spend", Label: "Monthly spend", UsedPercent: p})
 	}
 	return out
 }

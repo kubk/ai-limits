@@ -25,22 +25,12 @@ const (
 // Window is one usage allowance, as T3's ServerProviderUsageWindow.
 type Window struct {
 	ID          string
-	Kind        string // session, weekly, monthly, other
 	Label       string
 	UsedPercent float64
 	// DurationMins is the window's length; 0 when unknown (no pace mark).
 	DurationMins int
 	// ResetsAt is zero when unknown.
 	ResetsAt time.Time
-}
-
-// Result is what one provider reported.
-type Result struct {
-	Provider  string // "codex" or "claude"
-	Plan      string
-	Windows   []Window
-	Err       error `json:"-"`
-	CheckedAt time.Time
 }
 
 func clampPercent(v float64) float64 {
@@ -55,8 +45,8 @@ func (w Window) Remaining() int {
 	return int(math.Round(100 - clampPercent(w.UsedPercent)))
 }
 
-// ElapsedShare is the part of the window that has gone by, 0..1.
-func (w Window) ElapsedShare(now time.Time) (float64, bool) {
+// elapsedShare is the part of the window that has gone by, 0..1.
+func (w Window) elapsedShare(now time.Time) (float64, bool) {
 	if w.ResetsAt.IsZero() || w.DurationMins <= 0 {
 		return 0, false
 	}
@@ -69,11 +59,8 @@ func (w Window) ElapsedShare(now time.Time) (float64, bool) {
 // the window's time still left. Bars show quota remaining, so even pace
 // tracks time remaining.
 func (w Window) PaceRemaining(now time.Time) (float64, bool) {
-	e, ok := w.ElapsedShare(now)
-	if !ok {
-		return 0, false
-	}
-	return (1 - e) * 100, true
+	e, ok := w.elapsedShare(now)
+	return (1 - e) * 100, ok
 }
 
 type Pace int
@@ -87,7 +74,7 @@ const (
 
 // Pace compares usage with elapsed time, within ±5 points as on pace.
 func (w Window) Pace(now time.Time) Pace {
-	e, ok := w.ElapsedShare(now)
+	e, ok := w.elapsedShare(now)
 	if !ok {
 		return PaceUnknown
 	}
