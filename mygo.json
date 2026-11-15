@@ -1,0 +1,9 @@
+{
+  "name": "AI Limits",
+  "identifier": "dev.egor.ailimits",
+  "version": "0.1.0",
+  "out": "build",
+  "macos": {
+    "infoPlist": { "LSUIElement": true }
+  }
+}
