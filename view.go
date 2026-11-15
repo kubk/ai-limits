@@ -165,12 +165,9 @@ func bar(c *ui.Context, w limits.Window, left int, color ui.Color, now time.Time
 	if !w.ResetsAt.IsZero() {
 		resetsIn = limits.FormatDuration(w.ResetsAt.Sub(now))
 	}
-	tip := fmt.Sprintf("%d%% left", left)
-	if hasPace {
-		tip += fmt.Sprintf(" · %.0f%% of the window left\nThe line is where even spending would be.", pace)
-	}
+	tip := ""
 	if resetsIn != "" {
-		tip += "\nResets " + w.ResetsAt.Local().Format("Mon, Jan 2 at 15:04") + " · in " + resetsIn
+		tip = "Resets " + w.ResetsAt.Local().Format("Mon, Jan 2 at 15:04")
 	}
 	chipLabel := ui.Span{Text: "↻ " + resetsIn, Size: 11, Weight: 500, Color: fg}
 	// tick is where the even-pace mark goes, kept 3px inside the ends.
