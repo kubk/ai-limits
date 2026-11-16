@@ -14,7 +14,7 @@ func main() {
 	for _, p := range []struct {
 		name string
 		read func(context.Context) ([]limits.Window, error)
-	}{{"codex", limits.Codex}, {"claude", limits.Claude}} {
+	}{{"codex", limits.Codex}, {"claude", limits.Claude}, {"copilot", limits.Copilot}} {
 		windows, err := p.read(context.Background())
 		fmt.Printf("%s err=%v\n", p.name, err)
 		for _, w := range windows {

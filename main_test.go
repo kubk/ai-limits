@@ -17,7 +17,8 @@ func sample() *app {
 	return &app{
 		errs: map[string]error{},
 		windows: map[string][]limits.Window{
-			"codex": {{ID: "primary", Label: "Monthly", UsedPercent: 4, DurationMins: 43200, ResetsAt: now.Add(101*time.Hour + 30*time.Minute)}},
+			"codex":   {{ID: "primary", Label: "Monthly", UsedPercent: 4, DurationMins: 43200, ResetsAt: now.Add(101*time.Hour + 30*time.Minute)}},
+			"copilot": {{ID: "premium", Label: "Monthly", UsedPercent: 84.93, DurationMins: 43200, ResetsAt: now.Add(14*24*time.Hour + 19*time.Hour)}},
 			"claude": {
 				{ID: "seven_day", Label: "Weekly", UsedPercent: 2, DurationMins: 10080, ResetsAt: week},
 				{ID: "seven_day_fable", Label: "Weekly · Fable", UsedPercent: 1, DurationMins: 10080, ResetsAt: week},
@@ -44,9 +45,9 @@ func snap(t *testing.T, tt *ui.Tester, name string) {
 
 func TestView(t *testing.T) {
 	for _, dark := range []bool{true, false} {
-		tt := ui.NewTester(sample().view, popoverWidth, 400)
+		tt := ui.NewTester(sample().view, popoverWidth, 520)
 		tt.SetDark(dark)
-		for _, want := range []string{"Codex", "Claude", "96%", "98%", "99%", "Weekly · Fable"} {
+		for _, want := range []string{"Codex", "Claude", "96%", "98%", "99%", "Weekly · Fable", "Copilot", "15%"} {
 			if !tt.HasText(want) {
 				t.Errorf("missing %q in %q", want, tt.Texts())
 			}

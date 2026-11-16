@@ -1,5 +1,5 @@
 // AI Limits is a menu bar app: a click on its icon opens a popover with the
-// usage limits of Codex and Claude, read through their own CLIs.
+// usage limits of Codex, Claude and Copilot, read through their own CLIs.
 package main
 
 import (
@@ -41,6 +41,7 @@ type app struct {
 // (usageProviders.ts, Icons.tsx).
 type provider struct {
 	id, name    string
+	cli         string // the CLI the limits are read through
 	read        func(context.Context) ([]limits.Window, error)
 	light, dark ui.Color // bars fill with it at 35%, as T3's
 	icon        *ui.SVG
@@ -48,8 +49,10 @@ type provider struct {
 
 var providers = []provider{
 	// Codex draws in the contrast foreground.
-	{"codex", "Codex", limits.Codex, ui.Hex("#18181B"), ui.RGB(255, 255, 255), openaiIcon},
-	{"claude", "Claude", limits.Claude, ui.Hex("#D97757"), ui.Hex("#D97757"), claudeIcon},
+	{"codex", "Codex", "codex", limits.Codex, ui.Hex("#18181B"), ui.RGB(255, 255, 255), openaiIcon},
+	{"claude", "Claude", "claude", limits.Claude, ui.Hex("#D97757"), ui.Hex("#D97757"), claudeIcon},
+	// Copilot's purple, lighter on dark as GitHub's.
+	{"copilot", "Copilot", "gh", limits.Copilot, ui.Hex("#8534F3"), ui.Hex("#A371F7"), copilotIcon},
 }
 
 func (p provider) color(dark bool) ui.Color {
@@ -59,7 +62,7 @@ func (p provider) color(dark bool) ui.Color {
 	return p.light
 }
 
-// refresh reads both providers in parallel, off the main thread.
+// refresh reads all providers in parallel, off the main thread.
 func (a *app) refresh() {
 	if a.loading {
 		return

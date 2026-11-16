@@ -77,7 +77,7 @@ func (a *app) section(c *ui.Context, p provider, now time.Time) {
 		if err != nil {
 			msg := err.Error()
 			if errors.Is(err, limits.ErrNotInstalled) {
-				msg = fmt.Sprintf("Install the %s CLI and sign in to see its limits.", p.id)
+				msg = fmt.Sprintf("Install the %s CLI and sign in to see its limits.", p.cli)
 			} else if len(windows) > 0 {
 				msg = "Showing earlier numbers: " + msg
 			}
@@ -147,7 +147,7 @@ func paceIcon(c *ui.Context, p limits.Pace) {
 	default:
 		return
 	}
-	ui.Icon(c, icon).Size(14, 14).TextColor(c.Theme().TextMuted).Tooltip(tip)
+	ui.Icon(c, icon).Size(14, 14).Translate(0, 2).TextColor(c.Theme().TextMuted).Tooltip(tip)
 }
 
 // bar is T3 Code's pooled limit bar: the provider's color at 35% for what
@@ -227,7 +227,11 @@ var (
 	openaiSVG []byte
 	//go:embed icons/claude.svg
 	claudeSVG []byte
+	// VS Code's codicon (CC BY 4.0).
+	//go:embed icons/copilot.svg
+	copilotSVG []byte
 
-	openaiIcon = ui.MustParseSVG(openaiSVG)
-	claudeIcon = ui.MustParseSVG(claudeSVG)
+	openaiIcon  = ui.MustParseSVG(openaiSVG)
+	claudeIcon  = ui.MustParseSVG(claudeSVG)
+	copilotIcon = ui.MustParseSVG(copilotSVG)
 )
