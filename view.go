@@ -139,11 +139,11 @@ func paceIcon(c *ui.Context, p limits.Pace) {
 	var tip string
 	switch p {
 	case limits.PaceUnder:
-		icon, tip = trendingDown, "Under pace: headroom left for the rest of the window"
+		icon, tip = trendingDown, "Under pace: some will be left at reset"
 	case limits.PaceOn:
-		icon, tip = gauge, "On pace with the window"
+		icon, tip = gauge, "On pace: usage matches the time gone by"
 	case limits.PaceAhead:
-		icon, tip = trendingUp, "Ahead of pace: spending faster than the window elapses"
+		icon, tip = trendingUp, "Ahead of pace: may run out before reset"
 	default:
 		return
 	}

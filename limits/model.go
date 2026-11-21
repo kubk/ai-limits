@@ -69,7 +69,7 @@ type Pace int
 
 const (
 	PaceUnknown Pace = iota
-	PaceUnder        // headroom left for the rest of the window
+	PaceUnder        // some will be left at reset
 	PaceOn
 	PaceAhead // spending faster than the window elapses
 )
