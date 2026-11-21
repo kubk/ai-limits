@@ -67,3 +67,24 @@ func TestPlaceholderAndErrors(t *testing.T) {
 		t.Errorf("texts %q", tt.Texts())
 	}
 }
+
+func TestBadgeText(t *testing.T) {
+	now := time.Now()
+	in := func(d time.Duration) map[string][]limits.Window {
+		return map[string][]limits.Window{
+			"codex":  {{ResetsAt: now.Add(29 * 24 * time.Hour)}},
+			"claude": {{ResetsAt: now.Add(d)}, {}},
+		}
+	}
+	for d, want := range map[time.Duration]string{
+		13*time.Hour + 40*time.Minute: "13h",
+		time.Hour:                     "1h",
+		45 * time.Minute:              "45m",
+		25 * time.Hour:                "",
+		-time.Minute:                  "",
+	} {
+		if got := badgeText(in(d), now); got != want {
+			t.Errorf("%v: got %q, want %q", d, got, want)
+		}
+	}
+}

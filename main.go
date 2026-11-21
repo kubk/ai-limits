@@ -3,13 +3,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"image"
-	"image/color"
-	"image/draw"
-	"image/png"
 	"log"
 	"maps"
 	"sync"
@@ -33,6 +28,7 @@ type app struct {
 	// Read and written on the main thread only.
 	windows  map[string][]limits.Window // the last numbers read, by provider
 	errs     map[string]error           // the last read's failure, by provider
+	badge    string                     // the text on the tray icon's badge
 	loading  bool
 	lastLoad time.Time // when the last read started, for minRefreshGap
 }
@@ -104,10 +100,23 @@ func (a *app) refresh() {
 			}
 			a.loading = false
 			a.redraw()
+			a.updateIcon()
 			snapshot = maps.Clone(a.windows)
 		})
 		saveCache(snapshot) // off the main thread
 	}()
+}
+
+// updateIcon redraws the tray icon when its badge's text changes.
+func (a *app) updateIcon() {
+	b := badgeText(a.windows, time.Now())
+	if b == a.badge {
+		return
+	}
+	a.badge = b
+	if err := a.tray.SetIcon(trayIcon(b), true); err != nil {
+		log.Print("tray icon: ", err)
+	}
 }
 
 func (a *app) redraw() {
@@ -140,7 +149,7 @@ func (a *app) toggle() {
 func (a *app) ready() {
 	var err error
 	a.tray, err = mygo.NewTray(mygo.TrayOptions{
-		Icon:           trayIcon(),
+		Icon:           trayIcon(""),
 		IconIsTemplate: true,
 		ToolTip:        "AI Limits",
 	})
@@ -165,23 +174,15 @@ func (a *app) ready() {
 		a.tray.PopUpMenu()
 	})
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) { a.tray.Destroy() })
+	// The badge counts down from the last numbers read, without reading.
+	a.updateIcon()
+	go func() {
+		for range time.Tick(time.Minute) {
+			mygo.RunOnMain(a.updateIcon)
+		}
+	}()
 	// The login shell's PATH, ready before the first click needs it.
 	go limits.Prepare()
-}
-
-// trayIcon draws three bars of different lengths, black on transparent
-// for macOS to tint: the three meters of the popover.
-func trayIcon() []byte {
-	const s = 36 // 18pt at 2x
-	img := image.NewNRGBA(image.Rect(0, 0, s, s))
-	ink := image.NewUniform(color.NRGBA{A: 255})
-	for i, w := range []int{28, 20, 24} {
-		y := 7 + i*9
-		draw.Draw(img, image.Rect(4, y, 4+w, y+5), ink, image.Point{}, draw.Src)
-	}
-	var b bytes.Buffer
-	_ = png.Encode(&b, img)
-	return b.Bytes()
 }
 
 func main() {
