@@ -1,4 +1,4 @@
-// Package limits reads subscription usage limits of Codex, Claude and Copilot the way
+// Package limits reads subscription usage limits of Codex, Claude, Copilot and Amp the way
 // T3 Code does (github.com/pingdotgg/t3code, apps/server/src/provider and
 // packages/shared/src/usageLimits.ts): by asking each provider's own,
 // official CLI, never by calling private HTTP endpoints with stolen tokens.
@@ -8,6 +8,7 @@
 //     (what the Agent SDK's usage() and the /usage command send).
 //   - Copilot: `gh api /copilot_internal/user`, with gh's own login, the
 //     quota the Copilot editors read.
+//   - Amp: `amp usage`, the tier's monthly agent and orb pools.
 //
 // No prompt is ever sent, so no tokens are spent.
 package limits
@@ -33,6 +34,9 @@ type Window struct {
 	DurationMins int
 	// ResetsAt is zero when unknown.
 	ResetsAt time.Time
+	// Amount, when set, is what is left of the allowance, such as "504h":
+	// shown in place of the percent.
+	Amount string `json:",omitempty"`
 }
 
 func clampPercent(v float64) float64 {

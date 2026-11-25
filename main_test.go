@@ -20,6 +20,10 @@ func sample() *app {
 		windows: map[string][]limits.Window{
 			"codex":   {{ID: "primary", Label: "Monthly", UsedPercent: 4, DurationMins: 43200, ResetsAt: now.Add(101*time.Hour + 30*time.Minute)}},
 			"copilot": {{ID: "premium", Label: "Monthly", UsedPercent: 84.93, DurationMins: 43200, ResetsAt: now.Add(14*24*time.Hour + 19*time.Hour)}},
+			"amp": {
+				{ID: "orb", Label: "Orb time", UsedPercent: 32.8, DurationMins: 43200, ResetsAt: now.Add(14 * 24 * time.Hour), Amount: "504h"},
+				{ID: "agent", Label: "Agent", UsedPercent: 3.05, DurationMins: 43200, ResetsAt: now.Add(14 * 24 * time.Hour)},
+			},
 			"claude": {
 				{ID: "seven_day", Label: "Weekly", UsedPercent: 2, DurationMins: 10080, ResetsAt: week},
 				{ID: "seven_day_fable", Label: "Weekly · Fable", UsedPercent: 1, DurationMins: 10080, ResetsAt: week},
@@ -46,9 +50,9 @@ func snap(t *testing.T, tt *ui.Tester, name string) {
 
 func TestView(t *testing.T) {
 	for _, dark := range []bool{true, false} {
-		tt := ui.NewTester(sample().view, popoverWidth, 520)
+		tt := ui.NewTester(sample().view, popoverWidth, 720)
 		tt.SetDark(dark)
-		for _, want := range []string{"Codex", "Claude", "96%", "98%", "99%", "Weekly · Fable", "Copilot", "15%"} {
+		for _, want := range []string{"Codex", "Claude", "96%", "98%", "99%", "Weekly · Fable", "Copilot", "15%", "Amp", "504h", "Orb time"} {
 			if !tt.HasText(want) {
 				t.Errorf("missing %q in %q", want, tt.Texts())
 			}
@@ -73,7 +77,11 @@ func TestBadgeText(t *testing.T) {
 	now := time.Now()
 	in := func(d time.Duration) map[string][]limits.Window {
 		return map[string][]limits.Window{
-			"codex":  {{ResetsAt: now.Add(29 * 24 * time.Hour)}},
+			"codex": {{ResetsAt: now.Add(29 * 24 * time.Hour)}},
+			"amp": {
+				{ID: "orb", Label: "Orb time", UsedPercent: 32.8, DurationMins: 43200, ResetsAt: now.Add(14 * 24 * time.Hour), Amount: "504h"},
+				{ID: "agent", Label: "Agent", UsedPercent: 3.05, DurationMins: 43200, ResetsAt: now.Add(14 * 24 * time.Hour)},
+			},
 			"claude": {{ResetsAt: now.Add(d)}, {}},
 		}
 	}
@@ -94,7 +102,7 @@ func TestReorder(t *testing.T) {
 	a := sample()
 	var saved []settings
 	a.save = func(s settings) { saved = append(saved, s) }
-	tt := ui.NewTester(a.view, popoverWidth, 520)
+	tt := ui.NewTester(a.view, popoverWidth, 720)
 	if err := tt.Click("Settings"); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +119,7 @@ func TestReorder(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	want := []string{"copilot", "codex", "claude"}
+	want := []string{"copilot", "codex", "claude", "amp"}
 	if !slices.Equal(a.settings.Order, want) || len(saved) != 2 || !slices.Equal(saved[1].Order, want) {
 		t.Fatalf("order %v, saved %v", a.settings.Order, saved)
 	}
@@ -130,7 +138,7 @@ func TestOrdered(t *testing.T) {
 	for _, p := range ordered([]string{"copilot", "gone", "copilot"}) {
 		ids = append(ids, p.id)
 	}
-	if want := []string{"copilot", "codex", "claude"}; !slices.Equal(ids, want) {
+	if want := []string{"copilot", "codex", "claude", "amp"}; !slices.Equal(ids, want) {
 		t.Errorf("got %v, want %v", ids, want)
 	}
 }

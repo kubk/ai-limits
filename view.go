@@ -15,10 +15,21 @@ import (
 
 const popoverWidth = 460
 
+// popoverOpacity is how much of the window color covers the popover's glass.
+const popoverOpacity = 0.82
+
 func (a *app) view(c *ui.Context) {
 	t := c.Theme()
 	now := c.Now()
-	c.Root().Background(ui.Transparent)
+	// The popover's own material on macOS 26 is the clear Liquid Glass,
+	// which a bright window behind washes out: a mostly opaque backing in
+	// the window color keeps the text readable over anything, with a hint
+	// of the glass left.
+	backing := ui.Transparent
+	if c.Vibrancy() {
+		backing = t.Background.Alpha(popoverOpacity)
+	}
+	c.Root().Background(backing)
 	if c.Shortcut(ui.Cmd, ui.KeyR) {
 		a.refresh()
 	}
@@ -162,8 +173,13 @@ func meter(c *ui.Context, w limits.Window, color ui.Color, now time.Time) {
 		ui.Column(c).Width(118).Gap(1).Children(func() {
 			ui.Text(c, w.Label).FontSize(12).SingleLine()
 			ui.Row(c).AlignItems(ui.Baseline).Gap(5).Children(func() {
-				ui.Textf(c, "%d%%", left).FontSize(26).FontWeight(500).FontFeatures("tnum").LetterSpacing(-0.4)
-				ui.Text(c, "left").FontSize(12).TextColor(t.TextMuted)
+				if w.Amount != "" {
+					// No "left": an amount such as $19.39 fills the column.
+					ui.Text(c, w.Amount).FontSize(26).FontWeight(500).FontFeatures("tnum").LetterSpacing(-0.4)
+				} else {
+					ui.Textf(c, "%d%%", left).FontSize(26).FontWeight(500).FontFeatures("tnum").LetterSpacing(-0.4)
+					ui.Text(c, "left").FontSize(12).TextColor(t.TextMuted)
+				}
 				paceIcon(c, w.Pace(now))
 			})
 		})
@@ -274,8 +290,12 @@ var (
 	// VS Code's codicon (CC BY 4.0).
 	//go:embed icons/copilot.svg
 	copilotSVG []byte
+	// The three bars of the "m" in Amp's wordmark (ampcode.com/favicon.svg).
+	//go:embed icons/amp.svg
+	ampSVG []byte
 
 	openaiIcon  = ui.MustParseSVG(openaiSVG)
 	claudeIcon  = ui.MustParseSVG(claudeSVG)
 	copilotIcon = ui.MustParseSVG(copilotSVG)
+	ampIcon     = ui.MustParseSVG(ampSVG)
 )

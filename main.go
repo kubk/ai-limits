@@ -1,5 +1,5 @@
 // AI Limits is a menu bar app: a click on its icon opens a popover with the
-// usage limits of Codex, Claude and Copilot, read through their own CLIs.
+// usage limits of Codex, Claude, Copilot and Amp, read through their own CLIs.
 package main
 
 import (
@@ -33,7 +33,7 @@ type app struct {
 	settings settings
 	save     func(settings) // keeps the settings on disk; nil in tests
 	editing  bool           // the popover shows the settings screen
-	lastLoad time.Time // when the last read started, for minRefreshGap
+	lastLoad time.Time      // when the last read started, for minRefreshGap
 }
 
 // provider is one service the popover shows, with its look in T3 Code
@@ -52,6 +52,8 @@ var providers = []provider{
 	{"claude", "Claude", "claude", limits.Claude, ui.Hex("#D97757"), ui.Hex("#D97757"), claudeIcon},
 	// Copilot's purple, lighter on dark as GitHub's.
 	{"copilot", "Copilot", "gh", limits.Copilot, ui.Hex("#8534F3"), ui.Hex("#A371F7"), copilotIcon},
+	// Amp's dark green, brighter on dark.
+	{"amp", "Amp", "amp", limits.Amp, ui.Hex("#1F6B45"), ui.Hex("#5FD38D"), ampIcon},
 }
 
 func (p provider) color(dark bool) ui.Color {
