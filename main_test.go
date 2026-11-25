@@ -3,6 +3,7 @@ package main
 import (
 	"image/png"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -86,5 +87,50 @@ func TestBadgeText(t *testing.T) {
 		if got := badgeText(in(d), now); got != want {
 			t.Errorf("%v: got %q, want %q", d, got, want)
 		}
+	}
+}
+
+func TestReorder(t *testing.T) {
+	a := sample()
+	var saved []settings
+	a.save = func(s settings) { saved = append(saved, s) }
+	tt := ui.NewTester(a.view, popoverWidth, 520)
+	if err := tt.Click("Settings"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if tt.HasText("96%") || !tt.HasText("Order") {
+		t.Fatalf("settings screen texts %q", tt.Texts())
+	}
+	snap(t, tt, "settings.png")
+	if err := tt.Click("Move Copilot up"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if err := tt.Click("Move Codex down"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	want := []string{"copilot", "codex", "claude"}
+	if !slices.Equal(a.settings.Order, want) || len(saved) != 2 || !slices.Equal(saved[1].Order, want) {
+		t.Fatalf("order %v, saved %v", a.settings.Order, saved)
+	}
+	if err := tt.Click("Done"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	texts := tt.Texts()
+	if i, j := slices.Index(texts, "Copilot"), slices.Index(texts, "Codex"); i < 0 || j < 0 || i > j {
+		t.Errorf("limits not in the new order: %q", texts)
+	}
+}
+
+func TestOrdered(t *testing.T) {
+	var ids []string
+	for _, p := range ordered([]string{"copilot", "gone", "copilot"}) {
+		ids = append(ids, p.id)
+	}
+	if want := []string{"copilot", "codex", "claude"}; !slices.Equal(ids, want) {
+		t.Errorf("got %v, want %v", ids, want)
 	}
 }

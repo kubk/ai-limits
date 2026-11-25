@@ -30,15 +30,42 @@ func (a *app) view(c *ui.Context) {
 	}
 	box.Padding(14).Gap(14).Children(func() {
 		a.header(c)
-		for _, p := range providers {
+		if a.editing {
+			a.orderList(c)
+			return
+		}
+		for _, p := range ordered(a.settings.Order) {
 			a.section(c, p, now)
 		}
 	})
 }
 
+// iconButton is a 24pt square header or row button with an SF Symbol.
+func iconButton(c *ui.Context, key, label, tip, symbol string, disabled bool, click func()) {
+	t := c.Theme()
+	btn := ui.ButtonBase(c.Key(key)).Size(24, 24).Radius(6).
+		Label(label).Tooltip(tip).Disabled(disabled)
+	if btn.Hovered() && !disabled {
+		btn.Background(t.SurfaceHover)
+	}
+	color := t.TextMuted
+	if disabled {
+		color = color.Alpha(0.35)
+	}
+	btn.OnClick(click).Children(func() {
+		sfsymbols.Symbol(c, symbol).Size(13).Color(color).Weight(sfsymbols.Medium)
+	})
+}
+
 func (a *app) header(c *ui.Context) {
 	t := c.Theme()
-	ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+	ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
+		if a.editing {
+			ui.Text(c, "Order").FontSize(13).FontWeight(600)
+			ui.Spacer(c)
+			iconButton(c, "done", "Done", "Back to limits", "checkmark", false, func() { a.editing = false })
+			return
+		}
 		ui.Text(c, "Usage limits").FontSize(13).FontWeight(600)
 		ui.Spacer(c)
 		btn := ui.ButtonBase(c.Key("refresh")).Size(24, 24).Radius(6).
@@ -53,6 +80,23 @@ func (a *app) header(c *ui.Context) {
 				sfsymbols.Symbol(c, "arrow.clockwise").Size(13).Color(t.TextMuted).Weight(sfsymbols.Medium)
 			}
 		})
+		iconButton(c, "settings", "Settings", "Settings", "gearshape", false, func() { a.editing = true })
+	})
+}
+
+// orderList is the settings screen: the providers, without their limits,
+// each with buttons to move it up or down.
+func (a *app) orderList(c *ui.Context) {
+	list := ordered(a.settings.Order)
+	ui.Column(c).Gap(6).Children(func() {
+		for i, p := range list {
+			card(c.Key(p.id)).PaddingStart(12).PaddingEnd(6).PaddingY(6).AlignItems(ui.Center).Gap(8).Children(func() {
+				ui.Icon(c, p.icon).Size(15, 15).TextColor(p.color(c.Theme().Dark))
+				ui.Text(c, p.name).FontSize(13).FontWeight(500).Grow(1)
+				iconButton(c, "up", "Move "+p.name+" up", "Move up", "chevron.up", i == 0, func() { a.move(i, -1) })
+				iconButton(c, "down", "Move "+p.name+" down", "Move down", "chevron.down", i == len(list)-1, func() { a.move(i, +1) })
+			})
+		}
 	})
 }
 

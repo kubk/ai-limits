@@ -30,6 +30,9 @@ type app struct {
 	errs     map[string]error           // the last read's failure, by provider
 	badge    string                     // the text on the tray icon's badge
 	loading  bool
+	settings settings
+	save     func(settings) // keeps the settings on disk; nil in tests
+	editing  bool           // the popover shows the settings screen
 	lastLoad time.Time // when the last read started, for minRefreshGap
 }
 
@@ -142,7 +145,10 @@ func (a *app) toggle() {
 		Popover:    true,
 		Content:    ui.View(a.view),
 	})
-	a.panel.OnClosed(func() { a.panel = nil })
+	a.panel.OnClosed(func() {
+		a.panel = nil
+		a.editing = false // the next open shows the limits
+	})
 	a.refresh()
 }
 
@@ -187,7 +193,12 @@ func (a *app) ready() {
 
 func main() {
 	mygo.App.SetName("AI Limits") // before loadCache, which is under the app's name
-	a := &app{windows: loadCache(), errs: map[string]error{}}
+	a := &app{
+		windows:  loadCache(),
+		errs:     map[string]error{},
+		settings: loadSettings(),
+		save:     func(s settings) { go saveSettings(s) },
+	}
 	mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)
 	// The popover is the app's only window: keep running as it closes.
 	mygo.App.OnWindowAllClosed(func() {})
